@@ -10,5 +10,4 @@
       <Platform Solution="*|x86" Project="x86" />
     </Project>
   </Folder>
-  <Folder Name="/test/" />
 </Solution>

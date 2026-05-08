@@ -1,8 +1,11 @@
-﻿using Microsoft.VisualStudio;
+﻿using ErrorNotifications.Data.Options;
+using Microsoft.Extensions.Configuration;
+using Microsoft.VisualStudio;
 using Microsoft.VisualStudio.Shell;
 using Microsoft.VisualStudio.Shell.Interop;
 using System;
 using System.IO;
+using System.Linq;
 using System.Media;
 using System.Reflection;
 using System.Runtime.InteropServices;
@@ -32,7 +35,9 @@ namespace ErrorNotifications
     [PackageRegistration(UseManagedResourcesOnly = true, AllowsBackgroundLoading = true)]
     [Guid(ErrorNotificationsPackage.PackageGuidString)]
     public sealed class ErrorNotificationsPackage : AsyncPackage, IVsUpdateSolutionEvents
-    {        
+    {
+        private SoundsOptions _soundsOptions;
+
         /// <summary>
         /// ErrorNotificationsPackage GUID string.
         /// </summary>
@@ -41,13 +46,50 @@ namespace ErrorNotifications
         #region Package Members
         private void OnBuildDone(int fSucceeded)
         {
+#if DEBUG
+            System.Diagnostics.Debug.WriteLine(">>> OnBuildDone fired!");
+#endif
+
             ThreadHelper.ThrowIfNotOnUIThread();
             if (fSucceeded == 0)
             {
+#if DEBUG
+                System.Diagnostics.Debug.WriteLine(">>> Build Failed!");
+#endif
+
                 var assembly = Assembly.GetExecutingAssembly();
-                using (Stream stream = assembly.GetManifestResourceStream("ErrorNotifications.Sounds.Error.wav"))
+
+                Random random = new Random();
+
+                if (_soundsOptions.OnError != null)
                 {
-                    new SoundPlayer(stream).Play();
+                    if (_soundsOptions.OnError.Any())
+                    {
+                        string errorSound = _soundsOptions.OnError[random.Next(_soundsOptions.OnError.Length)];
+                        if (File.Exists(errorSound))
+                        {
+                            using (FileStream stream = File.OpenRead(errorSound))
+                            {
+#if DEBUG
+                                System.Diagnostics.Debug.WriteLine($">>> Playing {errorSound}");
+#endif
+                                new SoundPlayer(stream).Play();
+                            }
+                            return;
+                        }
+                        else
+                        {
+                            // Sound doesn't exist?
+                        }
+                    }
+                    else
+                    {
+                        // A key was found, but no data provided.
+                    }
+                }
+                else
+                {
+                    // No key found?
                 }
             }
         }
@@ -81,12 +123,31 @@ namespace ErrorNotifications
         /// <returns>A task representing the async work of package initialization, or an already completed task if there is none. Do not return null from this method.</returns>
         protected override async Task InitializeAsync(CancellationToken cancellationToken, IProgress<ServiceProgressData> progress)
         {
-            // When initialized asynchronously, the current thread may be a background thread at this point.
-            // Do any initialization that requires the UI thread after switching to the UI thread.
-            await this.JoinableTaskFactory.SwitchToMainThreadAsync(cancellationToken);
+            try
+            {
+#if DEBUG
+                System.Diagnostics.Debug.WriteLine(">>> ErrorNotifications InitializeAsync fired");
+                System.Diagnostics.Debug.WriteLine($">>> {Path.GetDirectoryName(GetType().Assembly.Location)}");
+#endif
 
-            IVsSolutionBuildManager buildManager = await GetServiceAsync(typeof(SVsSolutionBuildManager)) as IVsSolutionBuildManager;
-            buildManager.AdviseUpdateSolutionEvents(this, out uint cookie);
+                IConfiguration config = new ConfigurationBuilder()
+                    .SetBasePath(Path.GetDirectoryName(GetType().Assembly.Location))
+                    .AddJsonFile("appsettings.json", optional: false)
+                    .Build();
+
+                _soundsOptions = config.GetSection(SoundsOptions.JSONKey).Get<SoundsOptions>();
+
+                // When initialized asynchronously, the current thread may be a background thread at this point.
+                // Do any initialization that requires the UI thread after switching to the UI thread.
+                await this.JoinableTaskFactory.SwitchToMainThreadAsync(cancellationToken);
+
+                IVsSolutionBuildManager buildManager = await GetServiceAsync(typeof(SVsSolutionBuildManager)) as IVsSolutionBuildManager;
+                buildManager.AdviseUpdateSolutionEvents(this, out uint cookie);
+            }
+            catch (Exception exc)
+            {
+                System.Diagnostics.Debug.WriteLine($">>> {exc.ToString()}");
+            }
         }
 
         #endregion
